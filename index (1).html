@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Südostbayernbahn – Auftragsnummer Extraktor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://unpkg.com/tesseract.js@2.1.5/dist/tesseract.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; }
+
+  :root {
+    --db-red: #ec0016;
+    --db-red-dark: #b8000f;
+    --bg: #f4f6f8;
+    --surface: #ffffff;
+    --border: #dde3e8;
+    --text: #26313a;
+    --muted: #6b7680;
+    --ok: #1a7f4e;
+    --err: #c62828;
+    --teal: #0d9488;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 32px 16px 60px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .wrap { width: 100%; max-width: 780px; }
+
+  header.brand {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 24px;
+    margin-bottom: 24px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  }
+  header.brand img { height: 48px; width: auto; display: block; }
+  header.brand .titles h1 { font-size: 1.3rem; font-weight: 700; color: var(--text); }
+  header.brand .titles p { font-size: 0.85rem; color: var(--muted); margin-top: 2px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 22px 24px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  }
+
+  .drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 48px 24px;
+    text-align: center;
+    cursor: pointer;
+    position: relative;
+    transition: all .2s;
+    background: var(--surface);
+  }
+  .drop-zone:hover, .drop-zone.drag-over { border-color: var(--db-red); background: #fff8f8; }
+  .drop-zone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .drop-icon { font-size: 2.6rem; display: block; margin-bottom: 10px; }
+  .drop-label { font-size: 1rem; font-weight: 600; }
+  .drop-sub { font-size: 0.8rem; color: var(--muted); margin-top: 6px; }
+
+  #status-box { display: none; }
+  .status-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 0.85rem; }
+  .status-pct { font-weight: 700; color: var(--db-red); }
+  .bar-wrap { background: #e5eaee; border-radius: 5px; height: 8px; overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--db-red); width: 0%; transition: width .25s; }
+  .bar-fill.ocr { background: var(--teal); }
+  .log-lines { margin-top: 10px; font-size: 0.72rem; font-family: 'Courier New', monospace; color: var(--muted); max-height: 130px; overflow-y: auto; background: #fafbfc; border: 1px solid #eee; border-radius: 6px; padding: 8px 10px; }
+  .log-line { padding: 1px 0; }
+  .log-line.ok { color: var(--ok); }
+  .log-line.err { color: var(--err); }
+
+  .results-section { display: none; }
+  .results-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 10px; }
+  .results-title { font-size: 0.95rem; font-weight: 700; }
+  .btn-group { display: flex; gap: 8px; }
+
+  button.btn {
+    font-size: 0.82rem;
+    font-weight: 700;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    padding: 9px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  button.btn:hover { border-color: var(--db-red); color: var(--db-red); }
+  button.btn.primary { background: var(--db-red); border-color: var(--db-red); color: #fff; }
+  button.btn.primary:hover { background: var(--db-red-dark); }
+
+  #order-list { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .order-item { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+  .order-item:last-child { border-bottom: none; }
+  .order-num { font-family: 'Courier New', monospace; font-weight: 700; font-size: 1rem; color: var(--db-red-dark); flex: 1; }
+  .order-file { font-size: 0.72rem; color: var(--muted); max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .remove-btn { border: none; background: none; color: var(--muted); font-size: 0.95rem; cursor: pointer; }
+  .remove-btn:hover { color: var(--err); }
+  .empty-state, .error-item { padding: 16px; text-align: center; color: var(--muted); font-size: 0.85rem; }
+  .error-item { text-align: left; color: var(--err); border-bottom: 1px solid var(--border); }
+
+  .toast {
+    position: fixed; bottom: 28px; right: 28px; background: var(--db-red); color: #fff;
+    font-size: 0.85rem; font-weight: 700; padding: 12px 20px; border-radius: 8px;
+    opacity: 0; transform: translateY(10px); transition: all .2s; pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  }
+  .toast.show { opacity: 1; transform: none; }
+
+  footer.note { text-align: center; font-size: 0.75rem; color: var(--muted); margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="brand">
+    <img src="logo.png" alt="DB RegioNetz Südostbayernbahn">
+    <div class="titles">
+      <h1>Auftragsnummer Extraktor</h1>
+      <p>Findet IH-/Inspektionsauftrag-Nummern in PDF-Exporten</p>
+    </div>
+  </header>
+
+  <div class="card">
+    <div class="drop-zone" id="dropZone">
+      <input type="file" id="fileInput" accept=".pdf" multiple>
+      <span class="drop-icon">📄</span>
+      <div class="drop-label">PDF(s) hier ablegen oder klicken</div>
+      <div class="drop-sub">Mehrere Dateien gleichzeitig möglich</div>
+    </div>
+
+    <div id="status-box">
+      <div class="status-row">
+        <span id="status-text">Warte…</span>
+        <span class="status-pct" id="status-pct">0%</span>
+      </div>
+      <div class="bar-wrap"><div class="bar-fill" id="bar-fill"></div></div>
+      <div class="log-lines" id="log-lines"></div>
+    </div>
+  </div>
+
+  <div class="card results-section" id="orderResults">
+    <div class="results-header">
+      <span class="results-title" id="orderResultsTitle">0 Nummern gefunden</span>
+      <div class="btn-group">
+        <button class="btn" onclick="clearOrders()">Leeren</button>
+        <button class="btn primary" onclick="copyOrders()">Alle kopieren</button>
+      </div>
+    </div>
+    <div id="order-list"><div class="empty-state">Noch keine Nummern extrahiert.</div></div>
+  </div>
+
+  <footer class="note">Alles läuft lokal im Browser – es werden keine Dateien hochgeladen oder gespeichert.</footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+let busy = false;
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); if (!busy) dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag-over');
+  if (!busy) handleFiles([...e.dataTransfer.files].filter(f => f.name.toLowerCase().endsWith('.pdf')));
+});
+fileInput.addEventListener('change', () => { if (!busy) handleFiles([...fileInput.files]); });
+
+const statusBox = document.getElementById('status-box');
+const statusText = document.getElementById('status-text');
+const statusPct = document.getElementById('status-pct');
+const barFill = document.getElementById('bar-fill');
+const logDiv = document.getElementById('log-lines');
+
+function setBar(pct, label, isOCR) {
+  statusText.textContent = label;
+  statusPct.textContent = Math.round(pct) + '%';
+  barFill.style.width = Math.min(pct, 100) + '%';
+  barFill.classList.toggle('ocr', !!isOCR);
+}
+function log(msg, type) {
+  const d = document.createElement('div');
+  d.className = 'log-line' + (type ? ' ' + type : '');
+  d.textContent = msg;
+  logDiv.appendChild(d);
+  logDiv.scrollTop = logDiv.scrollHeight;
+}
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+const orders = [];
+
+const PATTERNS = [
+  /[ILTF1|][H#][-\s]?Auftrag[\s\S]{0,30}?(\d{9})/i,
+  /Inspektionsauftrag:?\s*(\d{9})/i,
+  /Auftragsnummer[\s\S]{0,10}?(\d{9})/i,
+  /Auftrags\S{0,6}\s{0,3}(\d{9})/i,
+  /Auftrag[\s\S]{0,30}?(\d{9})/i,
+];
+
+function findStandaloneNum(text) {
+  for (const line of text.split(/\n/)) {
+    const m = line.trim().match(/^(\d{9})$/);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+function parsePage(text) {
+  const t = text.replace(/\|/g, 'I');
+  const isBefund = /SAP.?Befund/i.test(t);
+
+  let blatt = null, totalBlatt = null;
+  const blattMatch = t.match(/Blatt?\s*:?\s*(\d+)\s+von\s+(\d+)/i);
+  if (blattMatch) { blatt = parseInt(blattMatch[1]); totalBlatt = parseInt(blattMatch[2]); }
+
+  // NOTE: we intentionally do NOT skip number extraction just because a page is a
+  // SAP-Befundliste page. Some orders only ever have a Befundliste page (no separate
+  // "Inspektion/Wartung" sheet), so skipping them entirely would silently drop that
+  // order number. If the number also appears on a normal page, it's the same value
+  // and gets deduplicated further downstream (foundNums is a Set; cross-file dup
+  // check already exists) — so extracting it here is always safe, never creates
+  // a false duplicate.
+  let num = null;
+  if (blatt === null || blatt === 1) {
+    for (const p of PATTERNS) {
+      const m = t.match(p);
+      if (m) { num = m[1]; break; }
+    }
+    if (!num) num = findStandaloneNum(text);
+  }
+  return { num, blatt, totalBlatt, isBefund };
+}
+
+async function pageToCanvas(pdfPage, scale, cropFraction = { x: 1, y: 1 }) {
+  const vp = pdfPage.getViewport({ scale });
+  const fullC = document.createElement('canvas');
+  fullC.width = vp.width; fullC.height = vp.height;
+  await pdfPage.render({ canvasContext: fullC.getContext('2d'), viewport: vp }).promise;
+
+  const cropW = Math.floor(fullC.width * cropFraction.x);
+  const cropH = Math.floor(fullC.height * cropFraction.y);
+  const cropped = document.createElement('canvas');
+  cropped.width = cropW; cropped.height = cropH;
+  cropped.getContext('2d').drawImage(fullC, 0, 0, cropW, cropH, 0, 0, cropW, cropH);
+  return cropped;
+}
+
+function ocrCanvas(canvas, onProg) {
+  return new Promise((resolve, reject) => {
+    Tesseract.recognize(canvas, 'deu', {
+      logger: m => {
+        if (m.status === 'loading tesseract core') onProg(5, 'Lade OCR-Kern…');
+        else if (m.status === 'initializing tesseract') onProg(15, 'Initialisiere OCR…');
+        else if (m.status === 'loading language traineddata') onProg(30, 'Lade Sprachmodell (~5 MB, einmalig)…');
+        else if (m.status === 'initializing api') onProg(45, 'Starte Analyse…');
+        else if (m.status === 'recognizing text') onProg(45 + m.progress * 50, 'OCR läuft… ' + Math.round(m.progress * 100) + '%');
+      }
+    }).then(r => resolve(r.data.text)).catch(reject);
+  });
+}
+
+async function extractOrderFile(file, idx, total) {
+  const label = `[${idx+1}/${total}] ${file.name}`;
+  log('▶ ' + label);
+
+  let pdf;
+  try {
+    pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  } catch (e) {
+    log('  ✗ PDF-Fehler: ' + e.message, 'err');
+    orders.push({ num: null, file: file.name, error: true });
+    return;
+  }
+
+  const foundNums = new Set();
+  let anyTextLayer = false;
+
+  for (let p = 1; p <= pdf.numPages; p++) {
+    setBar((idx / total) * 100 + ((p / pdf.numPages) / total) * 50, `${label} — Text-Layer Seite ${p}/${pdf.numPages}`);
+    const pg = await pdf.getPage(p);
+    const ct = await pg.getTextContent();
+    const items = ct.items.map(i => i.str).filter(s => s.trim());
+    if (items.length > 0) anyTextLayer = true;
+    const pageText = items.join(' ') + '\n' + items.join('\n');
+
+    const { num, blatt, totalBlatt, isBefund } = parsePage(pageText);
+    if (blatt !== null && blatt > 1) { log(`  ⏭ Seite ${p}: Blatt ${blatt} von ${totalBlatt} → übersprungen`); continue; }
+    if (isBefund && num) log(`  ℹ Seite ${p}: SAP_Befundlist mit Auftragsnummer ${num}`);
+    else if (isBefund) log('  ⏭ Seite ' + p + ': SAP_Befundlist ohne erkennbare Nummer');
+    if (num) foundNums.add(num);
+  }
+
+  if (foundNums.size > 0) {
+    for (const num of foundNums) {
+      const dup = orders.find(o => o.num === num);
+      if (dup) log(`  ⚠ Duplikat ${num} – bereits vorhanden aus: ${dup.file}`, 'err');
+      else { log('  ✓ Text-Layer: ' + num, 'ok'); orders.push({ num, file: file.name }); }
+    }
+    return;
+  }
+
+  if (anyTextLayer) log('  … Text-Layer ohne Treffer → versuche OCR als Fallback');
+  else log('  … kein Text-Layer → OCR startet auf allen ' + pdf.numPages + ' Seiten');
+
+  for (let p = 1; p <= pdf.numPages; p++) {
+    log('  … OCR Seite ' + p + '/' + pdf.numPages);
+    try {
+      const canvas = await pageToCanvas(await pdf.getPage(p), 3.0, { x: 1, y: 0.33 });
+      const text = await ocrCanvas(canvas, (pct, msg) => {
+        const base = (idx / total) * 100;
+        const slice = (1 / total) * 100;
+        const pageOffset = ((p - 1) / pdf.numPages) * slice;
+        const pageSlice = (1 / pdf.numPages) * slice;
+        setBar(base + pageOffset + (pct / 100) * pageSlice, `${label} — Seite ${p}/${pdf.numPages}: ${msg}`, true);
+      });
+
+      let { num, blatt, totalBlatt, isBefund } = parsePage(text);
+      if (blatt !== null && blatt > 1) { log(`  ⏭ Seite ${p}: Blatt ${blatt} von ${totalBlatt} → übersprungen`); continue; }
+      if (blatt === 1) log(`  ✓ Seite ${p}: Blatt 1 von ${totalBlatt}`);
+      if (isBefund && num) log(`  ℹ Seite ${p}: SAP_Befundlist mit Auftragsnummer ${num}`);
+
+      if (!num) {
+        log('  … kein Treffer in 1/3 → Fallback top 1/2, Seite ' + p);
+        const canvas2 = await pageToCanvas(await pdf.getPage(p), 2.5, { x: 1, y: 0.50 });
+        const text2 = await ocrCanvas(canvas2, (pct, msg) => {
+          const base = (idx / total) * 100;
+          const slice = (1 / total) * 100;
+          const pageOffset = ((p - 1) / pdf.numPages) * slice;
+          const pageSlice = (1 / pdf.numPages) * slice;
+          setBar(base + pageOffset + (pct / 100) * pageSlice, `${label} — Seite ${p} (1/2): ${msg}`, true);
+        });
+        ({ num } = parsePage(text2));
+      }
+
+      if (num) foundNums.add(num);
+      else {
+        const shortMatch = text.match(/[IT]H[-\s]?Auftrag[\s\S]{0,20}?(\d{8})/i) || text.match(/Auftrag[\s\S]{0,10}?(\d{8})/i);
+        if (shortMatch) log('  ⚠ Seite ' + p + ': OCR fand nur 8-stellige Zahl: ' + shortMatch[1] + ' (mögl. Lesefehler)', 'err');
+        else log('  ✗ Seite ' + p + ': keine Nummer gefunden');
+      }
+    } catch (e) {
+      log('  ✗ OCR-Fehler Seite ' + p + ': ' + e.message, 'err');
+    }
+  }
+
+  if (foundNums.size > 0) {
+    for (const num of foundNums) {
+      const dup = orders.find(o => o.num === num);
+      if (dup) log(`  ⚠ Duplikat ${num} – bereits vorhanden aus: ${dup.file}`, 'err');
+      else { log('  ✓ OCR: ' + num, 'ok'); orders.push({ num, file: file.name }); }
+    }
+  } else {
+    log('  ✗ Keine Nummer gefunden', 'err');
+    orders.push({ num: null, file: file.name, error: true });
+  }
+}
+
+function renderOrders() {
+  const section = document.getElementById('orderResults');
+  const list = document.getElementById('order-list');
+  const title = document.getElementById('orderResultsTitle');
+  section.style.display = orders.length ? 'block' : 'none';
+
+  const valid = orders.filter(o => o.num);
+  title.textContent = valid.length + ' Nummer' + (valid.length !== 1 ? 'n' : '') + ' gefunden';
+
+  if (!orders.length) { list.innerHTML = '<div class="empty-state">Noch keine Nummern extrahiert.</div>'; return; }
+
+  list.innerHTML = orders.map((o, i) => o.num
+    ? `<div class="order-item">
+         <span class="order-num">${o.num}</span>
+         <span class="order-file" title="${o.file}">${o.file}</span>
+         <button class="remove-btn" onclick="removeOrder(${i})">✕</button>
+       </div>`
+    : `<div class="error-item">⚠ Keine Nummer: ${o.file}</div>`
+  ).join('');
+}
+function removeOrder(i) { orders.splice(i, 1); renderOrders(); }
+function clearOrders() { orders.length = 0; renderOrders(); }
+function copyOrders() {
+  const txt = orders.filter(o => o.num).map(o => o.num).join('\n');
+  if (!txt) return;
+  navigator.clipboard.writeText(txt).then(() => showToast('✓ Kopiert!'));
+}
+
+async function handleFiles(files) {
+  if (!files.length) return;
+  busy = true;
+  dropZone.classList.add('busy');
+  logDiv.innerHTML = '';
+  statusBox.style.display = 'block';
+  setBar(0, 'Starte…', false);
+
+  for (let i = 0; i < files.length; i++) {
+    setBar((i / files.length) * 100, `Datei ${i+1}/${files.length}: ${files[i].name}`);
+    await extractOrderFile(files[i], i, files.length);
+    renderOrders();
+  }
+
+  setBar(100, `Fertig! ${files.length} Datei(en) abgeschlossen.`, false);
+  log('─── Fertig ───', 'ok');
+  fileInput.value = '';
+  busy = false;
+  dropZone.classList.remove('busy');
+}
+</script>
+</body>
+</html>
